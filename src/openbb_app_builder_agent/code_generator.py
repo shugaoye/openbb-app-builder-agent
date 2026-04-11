@@ -126,8 +126,8 @@ class OpenCodeGenerator(CodeGenerator):
         # Build command
         cmd = [
             opencode_binary,
-            "--stream",
-            "--json",
+            "run",
+            prompt,
         ]
 
         logger.info(f"Starting OpenCode: cwd={cwd}, session={session.session_id}")
@@ -147,7 +147,6 @@ class OpenCodeGenerator(CodeGenerator):
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -167,13 +166,6 @@ class OpenCodeGenerator(CodeGenerator):
             stderr_task = asyncio.create_task(read_stderr())
 
             logger.info(f"OpenCode process started with PID {process.pid}")
-
-            # Write prompt to stdin
-            if process.stdin:
-                prompt_bytes = prompt.encode("utf-8")
-                process.stdin.write(prompt_bytes)
-                await process.stdin.drain()
-                process.stdin.close()
 
             if process.stdout:
                 line_count = 0
