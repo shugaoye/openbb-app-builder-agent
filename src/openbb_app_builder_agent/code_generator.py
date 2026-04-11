@@ -66,26 +66,257 @@ class ClaudeCodeGenerator(CodeGenerator):
 class OpenCodeGenerator(CodeGenerator):
     """OpenCode generator implementation."""
 
+    def find_opencode_binary(self) -> Optional[str]:
+        """Find the OpenCode binary.
+
+        Returns:
+            Path to opencode binary if found, None otherwise.
+        """
+        import shutil
+        import os
+
+        # Check if opencode is in PATH
+        opencode_path = shutil.which("opencode")
+        if opencode_path:
+            return opencode_path
+
+        # Check common installation locations
+        common_paths = [
+            os.path.expanduser("~/.opencode/bin/opencode"),
+            "/usr/local/bin/opencode",
+            "/opt/homebrew/bin/opencode",
+        ]
+
+        for path in common_paths:
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+
+        return None
+
     async def run(
         self, prompt: str, session: Session, config: CodeGeneratorConfig
     ) -> AsyncGenerator[Dict, None]:
         """Run OpenCode."""
-        # Implement OpenCode integration
-        # For now, return a placeholder response
+        import asyncio
+        import json
+        import logging
+        import os
+
+        from openbb_ai import message_chunk, reasoning_step
+        from .session_manager import session_manager
+
+        logger = logging.getLogger(__name__)
+
+        opencode_binary = self.find_opencode_binary()
+        if not opencode_binary:
+            yield {
+                "type": "reasoning",
+                "event_type": "ERROR",
+                "message": "OpenCode binary not found",
+                "details": {
+                    "error": "Please install OpenCode and add it to your PATH"
+                },
+            }
+            yield {
+                "type": "message",
+                "content": "OpenCode is not installed. Please install it and try again.",
+            }
+            return
+
+        # Determine working directory
+        cwd = config.working_directory
+        if not cwd:
+            cwd = os.getcwd()
+
+        # Build command
+        cmd = [
+            opencode_binary,
+            "--stream",
+            "--json",
+        ]
+
+        logger.info(f"Starting OpenCode: cwd={cwd}, session={session.session_id}")
+        logger.debug(f"Command: {' '.join(cmd[:5])}...")
+
         yield {
             "type": "reasoning",
             "event_type": "INFO",
-            "message": "OpenCode generator is not yet implemented",
+            "message": "Starting OpenCode execution",
+            "details": {
+                "session_id": session.session_id,
+                "working_dir": cwd,
+            },
         }
-        yield {
-            "type": "message",
-            "content": "OpenCode integration is coming soon!",
-        }
+
+        try:
+            await session_manager.acquire_process_lock()
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+                limit=10 * 1024 * 1024,  # 10MB buffer limit
+            )
+
+            session_manager.set_current_process(process, session.session_id)
+
+            stderr_lines: list[str] = []
+
+            async def read_stderr():
+                if process.stderr:
+                    async for line in process.stderr:
+                        if line:
+                            stderr_lines.append(line.decode("utf-8"))
+
+            stderr_task = asyncio.create_task(read_stderr())
+
+            logger.info(f"OpenCode process started with PID {process.pid}")
+
+            # Write prompt to stdin
+            if process.stdin:
+                prompt_bytes = prompt.encode("utf-8")
+                process.stdin.write(prompt_bytes)
+                await process.stdin.drain()
+                process.stdin.close()
+
+            if process.stdout:
+                line_count = 0
+                async for line in process.stdout:
+                    if not line:
+                        continue
+
+                    line_count += 1
+                    try:
+                        line_str = line.decode("utf-8").strip()
+                        if not line_str:
+                            continue
+
+                        # Log every 10th line to track progress
+                        if line_count % 10 == 0:
+                            logger.debug(f"Processed {line_count} lines from OpenCode")
+
+                        # Try to parse as JSON
+                        try:
+                            event = json.loads(line_str)
+                            # Process OpenCode event
+                            if "type" in event:
+                                yield event
+                            else:
+                                # Fallback to message chunk
+                                yield {
+                                    "type": "message",
+                                    "content": line_str,
+                                }
+                        except json.JSONDecodeError:
+                            # Non-JSON line, treat as message chunk
+                            yield {
+                                "type": "message",
+                                "content": line_str,
+                            }
+
+                    except Exception as e:
+                        logger.error(f"Parse error on line {line_count}: {e}")
+                        yield {
+                            "type": "reasoning",
+                            "event_type": "WARNING",
+                            "message": "Parse error",
+                            "details": {"error": str(e)[:200]},
+                        }
+
+                logger.info(f"OpenCode output complete: {line_count} lines processed")
+
+            try:
+                await asyncio.wait_for(process.wait(), timeout=config.timeout)
+            except asyncio.TimeoutError:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+
+                yield {
+                    "type": "reasoning",
+                    "event_type": "ERROR",
+                    "message": "Execution timed out",
+                    "details": {"timeout_seconds": config.timeout},
+                }
+                yield {
+                    "type": "message",
+                    "content": f"\n\n**Execution timed out after {config.timeout} seconds.**",
+                }
+
+            await stderr_task
+
+            if stderr_lines:
+                stderr_text = "".join(stderr_lines)
+                logger.warning(f"OpenCode stderr: {stderr_text[:500]}")
+
+                yield {
+                    "type": "reasoning",
+                    "event_type": "ERROR" if process.returncode != 0 else "WARNING",
+                    "message": "OpenCode stderr output",
+                    "details": {"stderr": stderr_text[:1000]},
+                }
+                yield {
+                    "type": "message",
+                    "content": f"\n\n**{'Error' if process.returncode != 0 else 'Warning'}:**\n```\n{stderr_text[:2000]}\n```\n",
+                }
+
+            yield {
+                "type": "reasoning",
+                "event_type": "INFO" if process.returncode == 0 else "ERROR",
+                "message": f"OpenCode {'completed' if process.returncode == 0 else 'failed'}",
+                "details": {"exit_code": process.returncode},
+            }
+
+            if process.returncode != 0:
+                yield {
+                    "type": "message",
+                    "content": f"\n\n**OpenCode exited with code {process.returncode}.**\n",
+                }
+
+        except FileNotFoundError:
+            yield {
+                "type": "reasoning",
+                "event_type": "ERROR",
+                "message": "OpenCode binary not found",
+                "details": {"path": opencode_binary},
+            }
+        except PermissionError:
+            yield {
+                "type": "reasoning",
+                "event_type": "ERROR",
+                "message": "Permission denied",
+                "details": {"path": opencode_binary},
+            }
+        except Exception as e:
+            logger.exception("Unexpected error in OpenCode runner")
+            yield {
+                "type": "reasoning",
+                "event_type": "ERROR",
+                "message": "Unexpected error",
+                "details": {"error": str(e)[:500]},
+            }
+            # Also emit a user-friendly message
+            yield {
+                "type": "message",
+                "content": f"\n\n**Error:** An unexpected error occurred: {str(e)[:200]}\n\n"
+                "This may be due to a tool or MCP server not being available. "
+                "Please try again or check the server logs.",
+            }
+        finally:
+            session_manager.set_current_process(None)
+            session_manager.release_process_lock()
 
     def check_availability(self) -> tuple[bool, str]:
         """Check if OpenCode is available."""
-        # For now, return that it's not available
-        return False, "OpenCode is not yet implemented"
+        binary = self.find_opencode_binary()
+        if binary:
+            return True, f"OpenCode found at: {binary}"
+        return False, "OpenCode not found. Please install it and add to PATH"
 
 
 def get_code_generator(generator_type: str) -> CodeGenerator:
