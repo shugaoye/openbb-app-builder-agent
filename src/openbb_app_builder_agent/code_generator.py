@@ -110,18 +110,12 @@ class OpenCodeGenerator(CodeGenerator):
 
         opencode_binary = self.find_opencode_binary()
         if not opencode_binary:
-            yield ParsedEvent(
-                event_type="reasoning_step",
-                data=reasoning_step(
-                    event_type="ERROR",
-                    message="OpenCode binary not found",
-                    details={"error": "Please install OpenCode and add it to your PATH"},
-                ).model_dump(),
-            )
-            yield ParsedEvent(
-                event_type="message_chunk",
-                data=message_chunk("OpenCode is not installed. Please install it and try again.").model_dump(),
-            )
+            yield reasoning_step(
+                event_type="ERROR",
+                message="OpenCode binary not found",
+                details={"error": "Please install OpenCode and add it to your PATH"},
+            ).model_dump()
+            yield message_chunk("OpenCode is not installed. Please install it and try again.").model_dump()
             return
 
         # Determine working directory
@@ -139,17 +133,14 @@ class OpenCodeGenerator(CodeGenerator):
         logger.info(f"Starting OpenCode: cwd={cwd}, session={session.session_id}")
         logger.debug(f"Command: {' '.join(cmd[:5])}...")
 
-        yield ParsedEvent(
-            event_type="reasoning_step",
-            data=reasoning_step(
-                event_type="INFO",
-                message="Starting OpenCode execution",
-                details={
-                    "session_id": session.session_id,
-                    "working_dir": cwd,
-                },
-            ).model_dump(),
-        )
+        yield reasoning_step(
+            event_type="INFO",
+            message="Starting OpenCode execution",
+            details={
+                "session_id": session.session_id,
+                "working_dir": cwd,
+            },
+        ).model_dump()
 
         try:
             await session_manager.acquire_process_lock()
@@ -205,33 +196,21 @@ class OpenCodeGenerator(CodeGenerator):
                             event = json.loads(line_str)
                             # Process OpenCode event
                             if "content" in event:
-                                yield ParsedEvent(
-                                    event_type="message_chunk",
-                                    data=message_chunk(event["content"]).model_dump(),
-                                )
+                                yield message_chunk(event["content"]).model_dump()
                             else:
                                 # Fallback to message chunk
-                                yield ParsedEvent(
-                                    event_type="message_chunk",
-                                    data=message_chunk(line_str).model_dump(),
-                                )
+                                yield message_chunk(line_str).model_dump()
                         except json.JSONDecodeError:
                             # Non-JSON line, treat as message chunk
-                            yield ParsedEvent(
-                                event_type="message_chunk",
-                                data=message_chunk(line_str).model_dump(),
-                            )
+                            yield message_chunk(line_str).model_dump()
 
                     except Exception as e:
                         logger.error(f"Parse error on line {line_count}: {e}")
-                        yield ParsedEvent(
-                            event_type="reasoning_step",
-                            data=reasoning_step(
-                                event_type="WARNING",
-                                message="Parse error",
-                                details={"error": str(e)[:200]},
-                            ).model_dump(),
-                        )
+                        yield reasoning_step(
+                            event_type="WARNING",
+                            message="Parse error",
+                            details={"error": str(e)[:200]},
+                        ).model_dump()
 
                 logger.info(f"OpenCode output complete: {line_count} lines processed")
 
@@ -245,18 +224,12 @@ class OpenCodeGenerator(CodeGenerator):
                     process.kill()
                     await process.wait()
 
-                yield ParsedEvent(
-                    event_type="reasoning_step",
-                    data=reasoning_step(
-                        event_type="ERROR",
-                        message="Execution timed out",
-                        details={"timeout_seconds": config.timeout},
-                    ).model_dump(),
-                )
-                yield ParsedEvent(
-                    event_type="message_chunk",
-                    data=message_chunk(f"\n\n**Execution timed out after {config.timeout} seconds.**").model_dump(),
-                )
+                yield reasoning_step(
+                    event_type="ERROR",
+                    message="Execution timed out",
+                    details={"timeout_seconds": config.timeout},
+                ).model_dump()
+                yield message_chunk(f"\n\n**Execution timed out after {config.timeout} seconds.**").model_dump()
 
             await stderr_task
 
@@ -264,69 +237,45 @@ class OpenCodeGenerator(CodeGenerator):
                 stderr_text = "".join(stderr_lines)
                 logger.warning(f"OpenCode stderr: {stderr_text[:500]}")
 
-                yield ParsedEvent(
-                    event_type="reasoning_step",
-                    data=reasoning_step(
-                        event_type="ERROR" if process.returncode != 0 else "WARNING",
-                        message="OpenCode stderr output",
-                        details={"stderr": stderr_text[:1000]},
-                    ).model_dump(),
-                )
-                yield ParsedEvent(
-                    event_type="message_chunk",
-                    data=message_chunk(f"\n\n**{'Error' if process.returncode != 0 else 'Warning'}:**\n```\n{stderr_text[:2000]}\n```\n").model_dump(),
-                )
+                yield reasoning_step(
+                    event_type="ERROR" if process.returncode != 0 else "WARNING",
+                    message="OpenCode stderr output",
+                    details={"stderr": stderr_text[:1000]},
+                ).model_dump()
+                yield message_chunk(f"\n\n**{'Error' if process.returncode != 0 else 'Warning'}:**\n```\n{stderr_text[:2000]}\n```\n").model_dump()
 
-            yield ParsedEvent(
-                event_type="reasoning_step",
-                data=reasoning_step(
-                    event_type="INFO" if process.returncode == 0 else "ERROR",
-                    message=f"OpenCode {'completed' if process.returncode == 0 else 'failed'}",
-                    details={"exit_code": process.returncode},
-                ).model_dump(),
-            )
+            yield reasoning_step(
+                event_type="INFO" if process.returncode == 0 else "ERROR",
+                message=f"OpenCode {'completed' if process.returncode == 0 else 'failed'}",
+                details={"exit_code": process.returncode},
+            ).model_dump()
 
             if process.returncode != 0:
-                yield ParsedEvent(
-                    event_type="message_chunk",
-                    data=message_chunk(f"\n\n**OpenCode exited with code {process.returncode}.**\n").model_dump(),
-                )
+                yield message_chunk(f"\n\n**OpenCode exited with code {process.returncode}.**\n").model_dump()
 
         except FileNotFoundError:
-            yield ParsedEvent(
-                event_type="reasoning_step",
-                data=reasoning_step(
-                    event_type="ERROR",
-                    message="OpenCode binary not found",
-                    details={"path": opencode_binary},
-                ).model_dump(),
-            )
+            yield reasoning_step(
+                event_type="ERROR",
+                message="OpenCode binary not found",
+                details={"path": opencode_binary},
+            ).model_dump()
         except PermissionError:
-            yield ParsedEvent(
-                event_type="reasoning_step",
-                data=reasoning_step(
-                    event_type="ERROR",
-                    message="Permission denied",
-                    details={"path": opencode_binary},
-                ).model_dump(),
-            )
+            yield reasoning_step(
+                event_type="ERROR",
+                message="Permission denied",
+                details={"path": opencode_binary},
+            ).model_dump()
         except Exception as e:
             logger.exception("Unexpected error in OpenCode runner")
-            yield ParsedEvent(
-                event_type="reasoning_step",
-                data=reasoning_step(
-                    event_type="ERROR",
-                    message="Unexpected error",
-                    details={"error": str(e)[:500]},
-                ).model_dump(),
-            )
+            yield reasoning_step(
+                event_type="ERROR",
+                message="Unexpected error",
+                details={"error": str(e)[:500]},
+            ).model_dump()
             # Also emit a user-friendly message
-            yield ParsedEvent(
-                event_type="message_chunk",
-                data=message_chunk(f"\n\n**Error:** An unexpected error occurred: {str(e)[:200]}\n\n"
-                "This may be due to a tool or MCP server not being available. "
-                "Please try again or check the server logs.").model_dump(),
-            )
+            yield message_chunk(f"\n\n**Error:** An unexpected error occurred: {str(e)[:200]}\n\n"
+            "This may be due to a tool or MCP server not being available. "
+            "Please try again or check the server logs.").model_dump()
         finally:
             session_manager.set_current_process(None)
             session_manager.release_process_lock()
