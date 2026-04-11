@@ -1,9 +1,10 @@
 """OpenBB App Builder Agent.
 
-A FastAPI server that bridges OpenBB Copilot with Claude Code CLI,
+A FastAPI server that bridges OpenBB Copilot with code generators,
 enabling local app generation using .claude skills and reference backends.
 """
 
+import argparse
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -15,8 +16,8 @@ from openbb_ai import message_chunk, reasoning_step
 from openbb_ai.models import QueryRequest
 from sse_starlette.sse import EventSourceResponse
 
-from .claude_runner import ClaudeRunnerConfig, run_claude_code
-from .config import check_claude_installed, check_target_repo, settings
+from .code_generator import CodeGeneratorConfig, get_code_generator
+from .config import check_target_repo, settings
 from .prompt_builder import build_continuation_prompt, build_prompt
 from .request_parser import extract_conversation_id, parse_request
 from .session_manager import session_manager
@@ -32,11 +33,16 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler - check dependencies on startup."""
-    claude_ok, claude_msg = check_claude_installed()
-    if not claude_ok:
-        logger.warning(f"Claude CLI: {claude_msg}")
-    else:
-        logger.info(f"Claude CLI: {claude_msg}")
+    # Check code generator availability
+    try:
+        generator = get_code_generator(settings.code_generator)
+        gen_ok, gen_msg = generator.check_availability()
+        if not gen_ok:
+            logger.warning(f"{settings.code_generator} generator: {gen_msg}")
+        else:
+            logger.info(f"{settings.code_generator} generator: {gen_msg}")
+    except ValueError as e:
+        logger.error(f"Invalid code generator: {e}")
 
     repo_ok, repo_msg = check_target_repo()
     if not repo_ok:
@@ -67,13 +73,21 @@ app.add_middleware(
 @app.get("/health")
 def health() -> JSONResponse:
     """Health check with dependency status."""
-    claude_ok, claude_msg = check_claude_installed()
+    # Check code generator availability
+    gen_ok = False
+    gen_msg = ""
+    try:
+        generator = get_code_generator(settings.code_generator)
+        gen_ok, gen_msg = generator.check_availability()
+    except ValueError as e:
+        gen_msg = str(e)
+
     repo_ok, repo_msg = check_target_repo()
 
     # Determine overall status
-    if claude_ok and repo_ok:
+    if gen_ok and repo_ok:
         status = "healthy"
-    elif claude_ok:
+    elif gen_ok:
         status = "degraded"  # Can run but no target repo
     else:
         status = "unhealthy"
@@ -83,7 +97,11 @@ def health() -> JSONResponse:
             "status": status,
             "service": "openbb-app-builder-agent",
             "dependencies": {
-                "claude_cli": {"available": claude_ok, "message": claude_msg},
+                "code_generator": {
+                    "type": settings.code_generator,
+                    "available": gen_ok,
+                    "message": gen_msg
+                },
                 "target_repo": {"available": repo_ok, "message": repo_msg},
             },
         }
@@ -121,19 +139,35 @@ async def query(request: QueryRequest) -> EventSourceResponse:
     Receives the user's query, extracts widget/tool context,
     and streams responses back as SSE events.
     """
-    # Check Claude CLI availability
-    claude_ok, claude_msg = check_claude_installed()
-    if not claude_ok:
+    # Check code generator availability
+    try:
+        generator = get_code_generator(settings.code_generator)
+        gen_ok, gen_msg = generator.check_availability()
+        if not gen_ok:
 
+            async def error_response() -> AsyncGenerator[dict, None]:
+                yield reasoning_step(
+                    event_type="ERROR",
+                    message=f"{settings.code_generator} not available",
+                    details={"error": gen_msg},
+                ).model_dump()
+                yield message_chunk(
+                    f"{settings.code_generator} is not available: {gen_msg}"
+                ).model_dump()
+
+            return EventSourceResponse(
+                content=error_response(),
+                media_type="text/event-stream",
+            )
+    except ValueError as e:
         async def error_response() -> AsyncGenerator[dict, None]:
             yield reasoning_step(
                 event_type="ERROR",
-                message="Claude Code CLI not installed",
-                details={"error": claude_msg},
+                message="Invalid code generator",
+                details={"error": str(e)},
             ).model_dump()
             yield message_chunk(
-                "Claude Code CLI is not installed. Please install it from: "
-                "https://docs.anthropic.com/en/docs/claude-code"
+                f"Invalid code generator: {str(e)}"
             ).model_dump()
 
         return EventSourceResponse(
@@ -186,7 +220,7 @@ async def query(request: QueryRequest) -> EventSourceResponse:
         logger.warning("Target repo NOT configured - Claude will run in current directory")
 
     # Stream response
-    async def execution_loop() -> AsyncGenerator[dict, None]:
+    async def execution_loop(generator) -> AsyncGenerator[dict, None]:
         # Emit session info
         yield reasoning_step(
             event_type="INFO",
@@ -225,7 +259,7 @@ async def query(request: QueryRequest) -> EventSourceResponse:
             ).model_dump()
             yield message_chunk(
                 "**Note:** Target workspace repo is not configured. "
-                "Claude will run in current directory. "
+                f"{settings.code_generator.capitalize()} will run in current directory. "
                 "Set `OPENBB_APP_BUILDER_TARGET_REPO_PATH` for full app building.\n\n"
             ).model_dump()
 
@@ -235,8 +269,8 @@ async def query(request: QueryRequest) -> EventSourceResponse:
         else:
             prompt = build_prompt(context, include_system=True)
 
-        # Configure Claude runner
-        runner_config = ClaudeRunnerConfig(
+        # Configure code generator
+        generator_config = CodeGeneratorConfig(
             working_directory=str(settings.resolved_target_repo)
             if settings.resolved_target_repo
             else None,
@@ -244,12 +278,12 @@ async def query(request: QueryRequest) -> EventSourceResponse:
             skip_permissions=settings.claude_skip_permissions,
         )
 
-        # Execute Claude Code and stream results
-        async for event in run_claude_code(prompt, session, runner_config):
-            yield event.data
+        # Execute code generator and stream results
+        async for event in generator.run(prompt, session, generator_config):
+            yield event
 
     return EventSourceResponse(
-        content=execution_loop(),
+        content=execution_loop(generator),
         media_type="text/event-stream",
     )
 
@@ -293,10 +327,37 @@ def list_sessions() -> JSONResponse:
 if __name__ == "__main__":
     import uvicorn
 
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="OpenBB App Builder Agent")
+    parser.add_argument(
+        "--code-generator",
+        type=str,
+        choices=["claude", "opencode"],
+        default=settings.code_generator,
+        help="Code generator to use (default: claude)"
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=settings.host,
+        help="Host to run the server on"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=settings.port,
+        help="Port to run the server on"
+    )
+    args = parser.parse_args()
+
+    # Update settings if command line arguments are provided
+    if args.code_generator:
+        settings.code_generator = args.code_generator
+
     # NOTE: reload=False to prevent crashes when Claude creates files
     uvicorn.run(
         "openbb_app_builder_agent.main:app",
-        host=settings.host,
-        port=settings.port,
+        host=args.host,
+        port=args.port,
         reload=False,
     )

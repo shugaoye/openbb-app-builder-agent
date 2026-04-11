@@ -46,7 +46,7 @@ class TestHealthEndpoint:
         response = client.get("/health")
         data = response.json()
         assert "dependencies" in data
-        assert "claude_cli" in data["dependencies"]
+        assert "code_generator" in data["dependencies"]
         assert "target_repo" in data["dependencies"]
 
 

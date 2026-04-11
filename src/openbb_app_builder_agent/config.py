@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Code generator settings
+    code_generator: str = "claude"
+
     model_config = {
         "env_prefix": "OPENBB_APP_BUILDER_",
         "env_file": ".env",

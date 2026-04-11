@@ -2,7 +2,7 @@
 
 Demo here: [https://www.youtube.com/watch?v=zduIA_wmSEk](https://www.youtube.com/watch?v=zduIA_wmSEk)
 
-A FastAPI agent that bridges OpenBB Copilot with Claude Code CLI, enabling AI-powered generation of OpenBB Workspace backend apps.
+A FastAPI agent that bridges OpenBB Copilot with code generators (Claude Code CLI and OpenCode), enabling AI-powered generation of OpenBB Workspace backend apps.
 
 <img width="616" height="239" alt="CleanShot 2026-02-25 at 11 09 53" src="https://github.com/user-attachments/assets/f694396b-399e-4216-946f-59c14e0a6b74" />
 
@@ -10,14 +10,16 @@ A FastAPI agent that bridges OpenBB Copilot with Claude Code CLI, enabling AI-po
 
 - Receives requirements from OpenBB Copilot UI
 - Extracts widget context and tool-result data from requests
-- Invokes Claude Code CLI to build complete FastAPI backends
+- Supports multiple code generators: Claude Code CLI and OpenCode
 - Streams progress and results back to OpenBB Workspace
 - Creates timestamped app directories with conversation logs
+- Provides flexible code generator selection via command line or environment variable
 
 ## Prerequisites
 
 - Python 3.11+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
+- For Claude Code generator: [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
+- For OpenCode generator: OpenCode installed and configured
 - A target repository for generated apps (e.g., `backend-examples-for-openbb-workspace`)
 
 ## Installation
@@ -43,14 +45,37 @@ Optional environment variables:
 - `OPENBB_APP_BUILDER_HOST` - Server host (default: `0.0.0.0`)
 - `OPENBB_APP_BUILDER_PORT` - Server port (default: `7777`)
 - `OPENBB_APP_BUILDER_LOG_LEVEL` - Log level (default: `INFO`)
+- `OPENBB_APP_BUILDER_CODE_GENERATOR` - Code generator to use (default: `claude`, options: `claude`, `opencode`)
 
 ## Running the Agent
+
+### Basic Usage
 
 ```bash
 poetry run python -m openbb_app_builder_agent.main
 ```
 
-The agent will start on `http://localhost:7777` (or configured port).
+The agent will start on `http://localhost:7777` (or configured port) using the default Claude Code generator.
+
+### Selecting Code Generator
+
+You can specify the code generator via command line parameter:
+
+```bash
+# Use Claude Code generator (default)
+poetry run python -m openbb_app_builder_agent.main --code-generator claude
+
+# Use OpenCode generator
+poetry run python -m openbb_app_builder_agent.main --code-generator opencode
+```
+
+Or via environment variable:
+
+```bash
+# Use OpenCode generator
+export OPENBB_APP_BUILDER_CODE_GENERATOR=opencode
+poetry run python -m openbb_app_builder_agent.main
+```
 
 ## Connecting to OpenBB Workspace
 
@@ -135,6 +160,12 @@ poetry run python -m openbb_app_builder_agent.main
 │  OpenBB Copilot │────▶│  App Builder Agent   │────▶│ Claude Code │
 │       UI        │◀────│   (FastAPI + SSE)    │◀────│    CLI      │
 └─────────────────┘     └──────────────────────┘     └─────────────┘
+                                   │
+                                   ▼
+                        ┌──────────────────────┐
+                        │   Code Generator    │
+                        │  (Abstract Interface)│
+                        └──────────────────────┘
                                    │
                                    ▼
                         ┌──────────────────────┐
