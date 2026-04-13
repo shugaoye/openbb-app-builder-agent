@@ -1,0 +1,50 @@
+<mxfile host="app.diagrams.net" modified="2026-04-13T00:00:00.000Z" agent="Mozilla/5.0" etag="abcdef123456" version="20.8.16" type="device">
+  <diagram id="diagram_1" name="Flow Chart">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1920" pageHeight="1080" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- OpenBB Copilot UI -->
+        <mxCell id="2" value="OpenBB Copilot UI" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="100" width="180" height="80" as="geometry"/>
+        </mxCell>
+        <!-- App Builder Agent -->
+        <mxCell id="3" value="App Builder Agent (FastAPI + SSE)" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="100" width="220" height="80" as="geometry"/>
+        </mxCell>
+        <!-- Code Gen Interface -->
+        <mxCell id="4" value="Code Gen Interface" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="100" width="180" height="80" as="geometry"/>
+        </mxCell>
+        <!-- Generator Implementations -->
+        <mxCell id="5" value="Generator Implementations" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="250" width="220" height="120" as="geometry"/>
+        </mxCell>
+        <!-- Claude Code -->
+        <mxCell id="6" value="Claude Code" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="5">
+          <mxGeometry x="20" y="20" width="80" height="60" as="geometry"/>
+        </mxCell>
+        <!-- OpenCode -->
+        <mxCell id="7" value="OpenCode" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="5">
+          <mxGeometry x="120" y="20" width="80" height="60" as="geometry"/>
+        </mxCell>
+        <!-- Connections -->
+        <mxCell id="8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="2" target="3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="3" target="4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="4" target="3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="3" target="2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="4" target="5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
